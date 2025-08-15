@@ -17,12 +17,16 @@ const validator = new Validator();
 
 export const scanProcessEnv = (): string[] => {
   const hostEnvs = [];
+  logger.debug('[ENV DISCOVERY] Scanning process.env for RI_REDIS_HOST variables.');
 
   Object.entries(process.env).forEach(([env]) => {
+    logger.debug(`[ENV DISCOVERY] Checking env: ${env}`);
     if (env.startsWith('RI_REDIS_HOST') && process.env[env]) {
       hostEnvs.push(env);
+      logger.debug(`[ENV DISCOVERY] Found RI_REDIS_HOST env: ${env}=${process.env[env]}`);
     }
   });
+  logger.debug(`[ENV DISCOVERY] Discovered hostEnvs: ${JSON.stringify(hostEnvs)}`);
 
   return hostEnvs;
 };
@@ -122,6 +126,7 @@ export const prepareDatabaseFromEnvs = async (
 ): Promise<Database> => {
   try {
     const id = hostEnv.replace(/^RI_REDIS_HOST/, '');
+    console.log(`[ENV DISCOVERY] Trying to create DB connection for id=${id} hostEnv=${hostEnv}`);
 
     const databaseToAdd: Partial<Database> = {
       id: id || '0',
@@ -157,17 +162,19 @@ export const prepareDatabaseFromEnvs = async (
     }
 
     const preparedDatabase = populateDefaultValues(databaseToAdd);
+    logger.debug(`[ENV DISCOVERY] Prepared database object for validation: ${JSON.stringify(preparedDatabase)}`);
 
     await validator.validateOrReject(
       plainToClass(Database, preparedDatabase, { groups: ['security'] }),
     );
 
     return preparedDatabase;
-  } catch (error) {
-    // ignore error
-    logger.warn('Unable to prepare pre setup database from env', error, {
-      hostEnv,
-    });
+  } catch (e) {
+    if (Array.isArray(e)) {
+      console.error(`[ENV DISCOVERY ERROR] Validation failed for hostEnv=${hostEnv}:`, e.map(err => err.constraints));
+    } else {
+      console.error(`[ENV DISCOVERY ERROR] An unexpected error occurred for hostEnv=${hostEnv}:`, e);
+    }
     return null;
   }
 };
@@ -175,12 +182,16 @@ export const prepareDatabaseFromEnvs = async (
 export const discoverEnvDatabasesToAdd = async (): Promise<Database[]> => {
   try {
     const hostEnvs = scanProcessEnv();
+    logger.debug(`[ENV DISCOVERY] Host environments found by scanProcessEnv: ${JSON.stringify(hostEnvs)}`);
 
-    return (await Promise.all(hostEnvs.map(prepareDatabaseFromEnvs))).filter(
+    const discoveredDatabases = (await Promise.all(hostEnvs.map(prepareDatabaseFromEnvs))).filter(
       (v) => !!v,
     );
+    logger.debug(`[ENV DISCOVERY] Discovered and filtered databases: ${JSON.stringify(discoveredDatabases.map(db => db.id))}`);
+    return discoveredDatabases;
   } catch (e) {
     // ignore error
+    logger.error(`[ENV DISCOVERY] Error in discoverEnvDatabasesToAdd:`, e);
     return [];
   }
 };
